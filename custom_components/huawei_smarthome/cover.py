@@ -20,6 +20,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class HuaweiAdapterCover(AdapterEntityMixin, CoverEntity):
     def __init__(self, context: Any, spec: Any) -> None:
         self._init_adapter_entity(context, spec)
+        if spec.metadata.get("device_class"):
+            self._attr_device_class = spec.metadata["device_class"]
         features = CoverEntityFeature(0)
         for action, feature in (("open", CoverEntityFeature.OPEN), ("close", CoverEntityFeature.CLOSE), ("stop", CoverEntityFeature.STOP), ("set_position", CoverEntityFeature.SET_POSITION)):
             if action in spec.actions:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.humidifier import HumidifierEntity, HumidifierEntityFeature
+from homeassistant.components.humidifier import (
+    HumidifierEntity,
+    HumidifierEntityFeature,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -20,6 +23,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class HuaweiAdapterHumidifier(AdapterEntityMixin, HumidifierEntity):
     def __init__(self, context: Any, spec: Any) -> None:
         self._init_adapter_entity(context, spec)
+        if spec.metadata.get("device_class"):
+            self._attr_device_class = spec.metadata["device_class"]
         self._attr_supported_features = HumidifierEntityFeature.MODES if spec.metadata.get("modes") else HumidifierEntityFeature(0)
         self._attr_min_humidity = spec.metadata.get("min_humidity", 0)
         self._attr_max_humidity = spec.metadata.get("max_humidity", 100)

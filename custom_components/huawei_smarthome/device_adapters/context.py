@@ -139,7 +139,21 @@ class DeviceContext:
         if self.command_gateway.handle_message(payload):
             return True
         message = decode_message(payload)
-        if message is None or message.notify_type != "deviceDataChanged":
+        if message is None:
+            return False
+        if message.notify_type == "deviceStatus":
+            if message.body.get("devId") != self.dev_id:
+                return False
+            status = message.body.get("status")
+            if status not in {"online", "offline"}:
+                return False
+            online = status == "online"
+            if self.descriptor.online == online:
+                return False
+            self.descriptor = replace(self.descriptor, online=online)
+            self._notify_state_changed()
+            return True
+        if message.notify_type != "deviceDataChanged":
             return False
         if message.body.get("devId") != self.dev_id:
             return False

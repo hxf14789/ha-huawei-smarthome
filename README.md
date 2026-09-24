@@ -96,7 +96,6 @@ custom_components/huawei_smarthome/device_adapters/prod_<产品ID>.py
 
 - 使用实际设备验证状态读取和每个控制命令。
 - 根据该设备 Profile 中的字段范围、枚举值和单位进行转换，不要复用未经验证的其他产品规则。
-- 提交对应测试，覆盖已验证的读取和写入行为。
 - 不要提交账号、令牌、设备序列号、完整 Profile、日志或其他敏感数据。
 - 新增或修改适配器后，同步更新[已接入设备清单](docs/supported-devices.md)。
 

@@ -1,0 +1,208 @@
+"""Profile-based adapter for the Haque Smart Camera Pro (2BBH).
+
+The product uses the historical ``carmera`` service spelling.  The adapter
+maps the explicit switch/alert/phone/preset fields to the platforms available
+in this integration.  It does not invent a camera stream or expose cloud
+identifiers.
+
+This mapping is derived from the public Profile and has not been verified on
+a physical device.
+本适配器由开发者依据 Profile 完成适配，未经真实设备验证。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from .api import EntitySpec
+from .context import DeviceContext
+
+
+def _field(
+    profile: Mapping[str, Any], sid: str, name: str
+) -> Mapping[str, Any] | None:
+    for service in profile.get("services", ()):
+        if not isinstance(service, Mapping) or service.get("serviceId") != sid:
+            continue
+        for field in service.get("characteristics", ()):
+            if isinstance(field, Mapping) and field.get("characteristicName") == name:
+                return field
+    return None
+
+
+def _number(value: Any) -> int | float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.strip().casefold() in {"1", "true", "on"}:
+            return True
+        if value.strip().casefold() in {"0", "false", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
+
+
+def _payload_value(value: Any, field: Mapping[str, Any]) -> Any:
+    number = _number(value)
+    if number is None:
+        return value
+    if str(field.get("characteristicType") or "").casefold() in {
+        "int",
+        "integer",
+        "enum",
+        "bool",
+    }:
+        return int(round(number))
+    return number
+
+
+def _switch_spec(
+    profile: Mapping[str, Any],
+    sid: str,
+    field_name: str,
+    key: str,
+    name: str,
+) -> EntitySpec | None:
+    field = _field(profile, sid, field_name)
+    if field is None or "W" not in str(field.get("method") or ""):
+        return None
+
+    async def turn_on(device: DeviceContext, _data: Mapping[str, Any]) -> None:
+        await device.async_send_service(
+            sid, {field_name: _payload_value(1, field)}
+        )
+
+    async def turn_off(device: DeviceContext, _data: Mapping[str, Any]) -> None:
+        await device.async_send_service(
+            sid, {field_name: _payload_value(0, field)}
+        )
+
+    return EntitySpec(
+        platform="switch",
+        key=key,
+        name=name,
+        state=lambda device: {"is_on": _bool(device.value(sid, field_name))},
+        actions={"turn_on": turn_on, "turn_off": turn_off},
+    )
+
+
+def _binary_sensor_spec(
+    profile: Mapping[str, Any], sid: str, field_name: str, name: str, **metadata: Any
+) -> EntitySpec | None:
+    if _field(profile, sid, field_name) is None:
+        return None
+    return EntitySpec(
+        platform="binary_sensor",
+        key=f"{sid}_{field_name.strip()}",
+        name=name,
+        state=lambda device: {"is_on": _bool(device.value(sid, field_name))},
+        metadata=metadata,
+    )
+
+
+def _button_spec(
+    profile: Mapping[str, Any], sid: str, field_name: str, name: str
+) -> EntitySpec | None:
+    field = _field(profile, sid, field_name)
+    if field is None or "W" not in str(field.get("method") or ""):
+        return None
+
+    async def press(device: DeviceContext, _data: Mapping[str, Any]) -> None:
+        await device.async_send_service(
+            sid, {field_name: _payload_value(1, field)}
+        )
+
+    return EntitySpec(
+        platform="button",
+        key=f"{sid}_{field_name}",
+        name=name,
+        state=lambda _device: {},
+        actions={"press": press},
+    )
+
+
+class Product2BBHAdapter:
+    """Haque Smart Camera Pro (GD01)."""
+
+    prod_id = "2BBH"
+
+    def entities(self, context: DeviceContext) -> tuple[EntitySpec, ...]:
+        profile = context.profile
+        if profile is None:
+            return ()
+        specs: list[EntitySpec] = []
+
+        for field_name, key, name in (
+            ("on", "carmera_on", "摄像头"),
+            ("cruise", "carmera_cruise", "巡航"),
+        ):
+            spec = _switch_spec(profile, "carmera", field_name, key, name)
+            if spec is not None:
+                specs.append(spec)
+
+        for field_name, name, device_class in (
+            ("videoAlarm", "移动侦测", "motion"),
+            ("audioAlarm", "声音告警", "sound"),
+            ("babyCryAlarm", "婴儿哭声", "sound"),
+            ("humanBodyAlarm", "人形侦测", "motion"),
+        ):
+            spec = _binary_sensor_spec(
+                profile, "carmera", field_name, name, device_class=device_class
+            )
+            if spec is not None:
+                specs.append(spec)
+
+        photo = _button_spec(profile, "carmera", "shoot", "拍照")
+        if photo is not None:
+            specs.append(photo)
+
+        calling = _binary_sensor_spec(profile, "voip", "calling", "视频通话中")
+        if calling is not None:
+            specs.append(calling)
+        call = _button_spec(profile, "voip", "voipCall", "视频通话")
+        if call is not None:
+            specs.append(call)
+
+        for service in profile.get("services", ()):
+            if not isinstance(service, Mapping):
+                continue
+            sid = service.get("serviceId")
+            if not isinstance(sid, str) or not sid.startswith("visitPoint"):
+                continue
+            suffix = sid.removeprefix("visitPoint")
+            spec = _button_spec(profile, sid, "move", f"预置点{suffix}")
+            if spec is not None:
+                specs.append(spec)
+
+        if _field(profile, "netInfo", "RSSI") is not None:
+            specs.append(
+                EntitySpec(
+                    platform="sensor",
+                    key="rssi",
+                    name="信号强度 RSSI",
+                    state=lambda device: {
+                        "native_value": _number(device.value("netInfo", "RSSI"))
+                    },
+                    metadata={
+                        "unit": "dBm",
+                        "device_class": "signal_strength",
+                        "state_class": "measurement",
+                    },
+                )
+            )
+        return tuple(specs)
+
+
+ADAPTER = Product2BBHAdapter()

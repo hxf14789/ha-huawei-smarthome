@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
+import json
 import logging
 from typing import Any, Protocol
 
@@ -157,7 +158,8 @@ class HomeAssistantProfileStore:
                 async with self._session.get(url, timeout=20) as response:
                     if response.status != 200:
                         raise RuntimeError(f"HTTP {response.status}")
-                    payload = await response.json(content_type=None)
+                    raw = await response.read()
+                    payload = json.loads(raw.decode("utf-8-sig"))
                 profile = _profile_from_payload(payload)
             except Exception as error:  # noqa: BLE001 - Profile is optional
                 _LOGGER.debug(

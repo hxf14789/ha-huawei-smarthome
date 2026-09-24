@@ -55,6 +55,7 @@ PLATFORMS = (
     "cover",
     "event",
     "humidifier",
+    "water_heater",
     "lock",
     "media_player",
 )

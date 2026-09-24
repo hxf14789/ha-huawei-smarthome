@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -28,6 +33,9 @@ class HuaweiAdapterSensor(SensorEntity):
     def __init__(self, context: Any, spec: Any) -> None:
         self._device_context = context
         self._spec = spec
+        self._attribute_timestamps = {
+            name: None for name in spec.metadata.get("attribute_update_timestamps", {})
+        }
         metadata = spec.metadata
         self._attr_unique_id = f"{context.home_id}_{context.dev_id}_{spec.key}"
         self._attr_name = spec.name or spec.key
@@ -51,11 +59,45 @@ class HuaweiAdapterSensor(SensorEntity):
     def native_value(self) -> Any:
         return self._spec.state(self._device_context).get("native_value")
 
+    @property
+    def extra_state_attributes(self):
+        """Expose optional product-specific read-only attributes."""
+        attributes = self._spec.state(self._device_context).get(
+            "extra_state_attributes"
+        )
+        if attributes is None and not self._attribute_timestamps:
+            return None
+        return {**(attributes or {}), **self._attribute_timestamps}
+
+    def _attribute_service_updated(self, sid, data, timestamp):
+        """Timestamp only the reported fields requested by this adapter."""
+        changed = False
+        for name, rule in self._spec.metadata.get(
+            "attribute_update_timestamps", {}
+        ).items():
+            if sid == rule["service"] and any(
+                field in data for field in rule["fields"]
+            ):
+                self._attribute_timestamps[name] = datetime.now(
+                    timezone.utc
+                ).isoformat()
+                changed = True
+        if changed:
+            self.async_write_ha_state()
+
     async def async_added_to_hass(self) -> None:
         self._device_context.add_state_listener(self._state_changed)
+        if self._attribute_timestamps:
+            self._device_context.add_service_update_listener(
+                self._attribute_service_updated
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         self._device_context.remove_state_listener(self._state_changed)
+        if self._attribute_timestamps:
+            self._device_context.remove_service_update_listener(
+                self._attribute_service_updated
+            )
 
     def _state_changed(self) -> None:
         self.async_write_ha_state()
